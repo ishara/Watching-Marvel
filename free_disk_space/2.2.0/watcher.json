@@ -1,0 +1,76 @@
+PUT /_watcher/watch/free_disk_space
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "metadata": {
+    "lower_bound": 0.5
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats,node",
+        "body": {
+          "aggs": {
+            "node_stats": {
+              "filter": {
+                "range": {
+                  "timestamp": {
+                    "gte": "now-30m"
+                  }
+                }
+              },
+              "aggs": {
+                "nodes": {
+                  "terms": {
+                    "field": "node_stats.node_id",
+                    "size": 100
+                  },
+                  "aggs": {
+                    "total_in_bytes": {
+                      "max": {
+                        "field": "node_stats.fs.total.total_in_bytes"
+                      }
+                    },
+                    "available_in_bytes": {
+                      "max": {
+                        "field": "node_stats.fs.total.available_in_bytes"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "size": 100,
+          "post_filter": {
+            "term": {
+              "_type": {
+                "value": "node"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "nodes=ctx.payload.aggregations.node_stats.nodes.buckets; if (nodes.size() == 0) return false; for (node in nodes){if (node.available_in_bytes.value/node.total_in_bytes.value < ctx.metadata.lower_bound) return true;}; return false;"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "names = [:]; for (hit in ctx.payload.hits.hits){names[hit._id]=hit._source.node.name;}; fs_nodes=[]; for (node in ctx.payload.aggregations.node_stats.nodes.buckets){if (node.available_in_bytes.value/node.total_in_bytes.value < ctx.metadata.lower_bound) {node.key=names[node.key]; node.available_in_gb=(node.available_in_bytes.value/1073741824).round(2); node.total_in_gb=(node.total_in_bytes.value/1073741824).round(2); fs_nodes.push(node);}}; return fs_nodes;"
+      },
+      "logging": {
+        "text": "Available space on Filesystem is below recommended ratios for following nodes: \n {{#ctx.payload._value}}For node {{key}}: {{available_in_gb}}gb of {{total_in_gb}}gb is available\n{{/ctx.payload._value}}"
+      }
+    }
+  }
+}

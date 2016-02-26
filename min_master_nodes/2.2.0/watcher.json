@@ -1,0 +1,61 @@
+PUT /_watcher/watch/min_master_nodes
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "input": {
+    "chain": {
+      "inputs": [
+        {
+          "marvel": {
+            "search": {
+              "request": {
+                "indices": ".marvel-es-*",
+                "types": "cluster_info",
+                "body": {
+                  "size": 1,
+                  "_source": "cluster_stats.nodes.count"
+                }
+              }
+            }
+          }
+        },
+        {
+          "cluster": {
+            "http": {
+              "request": {
+                "host": "localhost",
+                "port": 9201,
+                "path": "/_nodes/_all/settings",
+                "auth": {
+                  "basic": {
+                    "username": "admin",
+                    "password": "password"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "if (ctx.payload.marvel.hits.total == 0) return false; master_eligible=ctx.payload.marvel.hits.hits[0]._source.cluster_stats.nodes.count.master_data+ctx.payload.marvel.hits.hits[0]._source.cluster_stats.nodes.count.master_only; if (master_eligible == 1) return false; quorum=Math.floor(master_eligible/2)+1; nodeIds=ctx.payload.cluster.nodes.collect({it.key}); nodes=nodeIds.collect({ctx.payload.cluster.nodes[it].settings}); return nodes.any({return !it.discovery||!it.discovery.zen||!it.discovery.zen.minimum_master_nodes||it.discovery.zen.minimum_master_nodes.toInteger() < quorum});"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "master_eligible=ctx.payload.marvel.hits.hits[0]._source.cluster_stats.nodes.count.master_data + ctx.payload.marvel.hits.hits[0]._source.cluster_stats.nodes.count.master_only; quorum = (int) Math.floor(master_eligible/2)+1; nodeIds=ctx.payload.cluster.nodes.collect({it.key}); nodes=nodeIds.collect({ctx.payload.cluster.nodes[it].settings}); return nodes.findAll({return !it.discovery||!it.discovery.zen||!it.discovery.zen.minimum_master_nodes||it.discovery.zen.minimum_master_nodes.toInteger() < quorum})"
+      },
+      "logging": {
+        "text": "Minimum Master Setting not Set or too low for: \n{{#ctx.payload._value}} {{node.name}} the value is {{#discovery.zen.minimum_master_nodes}}{{discovery.zen.minimum_master_nodes}}{{/discovery.zen.minimum_master_nodes}}{{^discovery.zen.minimum_master_nodes}}not set{{/discovery.zen.minimum_master_nodes}} \n{{/ctx.payload._value}}"
+      }
+    }
+  }
+}

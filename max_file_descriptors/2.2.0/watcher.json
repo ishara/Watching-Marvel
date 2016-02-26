@@ -1,0 +1,74 @@
+PUT /_watcher/watch/max_file_descriptors
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "metadata": {
+    "max_number_file_descriptors": 65535
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats,node",
+        "body": {
+          "aggs": {
+            "node_stats": {
+              "filter": {
+                "range": {
+                  "timestamp": {
+                    "gte": "now-30m"
+                  }
+                }
+              },
+              "aggs": {
+                "nodes": {
+                  "terms": {
+                    "field": "node_stats.node_id",
+                    "size": 100,
+                    "order": {
+                      "filedescriptors": "asc"
+                    }
+                  },
+                  "aggs": {
+                    "filedescriptors": {
+                      "min": {
+                        "field": "node_stats.process.max_file_descriptors"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "size": 100,
+          "post_filter": {
+            "term": {
+              "_type": {
+                "value": "node"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "if (ctx.payload.aggregations.node_stats.nodes.buckets.size() == 0) return false; def node = ctx.payload.aggregations.node_stats.nodes.buckets[0]; return node && node.filedescriptors.value <= ctx.metadata.max_number_file_descriptors;"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; nodes = ctx.payload.aggregations.node_stats.nodes; return nodes.buckets.findAll({return it.filedescriptors.value <= ctx.metadata.max_number_file_descriptors}).collect({ it.key=names[it.key]; it });"
+      },
+      "logging": {
+        "text": "Nodes with file descriptors configured too low:\n{{#ctx.payload._value}}\"{{key}}\" - File Descriptors is set to {{filedescriptors.value}}\n{{/ctx.payload._value}}"
+      }
+    }
+  }
+}
