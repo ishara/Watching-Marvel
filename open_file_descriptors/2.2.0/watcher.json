@@ -1,0 +1,95 @@
+PUT /_watcher/watch/open_file_descriptors
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "metadata": {
+    "upper_bound": 50
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats,node",
+        "body": {
+          "aggs": {
+            "nodes": {
+              "filter": {
+                "bool": {
+                  "must": [
+                    {
+                      "range": {
+                        "timestamp": {
+                          "gte": "now-1m",
+                          "lte": "now"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "aggs": {
+                "node_stats": {
+                  "terms": {
+                    "field": "node_stats.node_id",
+                    "size": 10,
+                    "order": {
+                      "open_file_descriptors": "desc"
+                    }
+                  },
+                  "aggs": {
+                    "open_file_descriptors": {
+                      "avg": {
+                        "field": "node_stats.process.open_file_descriptors"
+                      }
+                    },
+                    "max_file_descriptors": {
+                      "min": {
+                        "field": "node_stats.process.max_file_descriptors"
+                      }
+                    },
+                    "file_descriptor_ratio": {
+                      "bucket_script": {
+                        "buckets_path": {
+                          "open_file_descriptors": "open_file_descriptors",
+                          "max_file_descriptors": "max_file_descriptors"
+                        },
+                        "script": "(open_file_descriptors / max_file_descriptors)*100"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "size": 100,
+          "post_filter": {
+            "term": {
+              "_type": {
+                "value": "node"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "def nodes=ctx.payload.aggregations.nodes.node_stats.buckets; if (nodes.size() == 0) return false; def node = nodes[0]; return node && node.file_descriptor_ratio && node.file_descriptor_ratio.value >= ctx.metadata.upper_bound;"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "names = [:]; for (hit in ctx.payload.hits.hits){names[hit._id]=hit._source.node.name;}; fs_nodes=[]; for (node in ctx.payload.aggregations.nodes.node_stats.buckets){if (node.file_descriptor_ratio.value >= ctx.metadata.upper_bound) {node.key=names[node.key]; node.file_descriptor_ratio.value=node.file_descriptor_ratio.value.round(2); node.open_file_descriptors.value=node.open_file_descriptors.value.round(2); fs_nodes.push(node);}}; return fs_nodes"
+      },
+      "logging": {
+        "text": "Open File descriptors exceeds the recommended level of {{ctx.metadata.upper_bound}}% on the following nodes:\n {{#ctx.payload._value}}{{key}}: {{file_descriptor_ratio.value}}% ({{open_file_descriptors.value}}/{{max_file_descriptors.value}})\n{{/ctx.payload._value}}"
+      }
+    }
+  }
+}
