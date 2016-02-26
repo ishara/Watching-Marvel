@@ -1,0 +1,81 @@
+PUT /_watcher/watch/mlock_enabled
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats,node",
+        "body": {
+          "aggs": {
+            "node_stats": {
+              "filter": {
+                "bool": {
+                  "must": [
+                    {
+                      "range": {
+                        "timestamp": {
+                          "gte": "now-30m"
+                        }
+                      }
+                    },
+                    {
+                      "term": {
+                        "node_stats.mlockall": {
+                          "value": "false"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "aggs": {
+                "nodes": {
+                  "terms": {
+                    "field": "node_stats.node_id",
+                    "size": 100
+                  },
+                  "aggs": {
+                    "mlockall": {
+                      "max": {
+                        "field": "node_stats.mlockall"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "size": 100,
+          "post_filter": {
+            "term": {
+              "_type": {
+                "value": "node"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "return ctx.payload.aggregations.node_stats.nodes.buckets.size() > 0;"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "names = [:]; for (hit in ctx.payload.hits.hits){names[hit._id]=hit._source.node.name;};fs_nodes=''; for (node in ctx.payload.aggregations.node_stats.nodes.buckets){fs_nodes=names[node.key]+'\\n'+fs_nodes}; return fs_nodes;" 
+      },
+      "logging": {
+        "text": "Mlockall not set on the following nodes:\n {{#ctx.payload._value}}{{.}}\n{{/ctx.payload._value}}"
+      }
+    }
+  }
+}
