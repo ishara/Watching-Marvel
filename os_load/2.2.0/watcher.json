@@ -1,0 +1,83 @@
+PUT /_watcher/watch/os_load
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "metadata": {
+    "upper_bound": 2
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats,node",
+        "body": {
+          "aggs": {
+            "node_stats": {
+              "filter": {
+                "range": {
+                  "timestamp": {
+                    "gte": "now-2m",
+                    "lte": "now"
+                  }
+                }
+              },
+              "aggs": {
+                "minutes": {
+                  "date_histogram": {
+                    "field": "timestamp",
+                    "interval": "minute"
+                  },
+                  "aggs": {
+                    "nodes": {
+                      "terms": {
+                        "field": "node_stats.node_id",
+                        "size": 100,
+                        "order": {
+                          "load": "desc"
+                        }
+                      },
+                      "aggs": {
+                        "load": {
+                          "avg": {
+                            "field": "node_stats.os.load_average"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "size": 100,
+          "post_filter": {
+            "term": {
+              "_type": {
+                "value": "node"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "if (ctx.payload.aggregations.node_stats.minutes.buckets.size() == 0) return false; def latest = ctx.payload.aggregations.node_stats.minutes.buckets[-1]; def node = latest.nodes.buckets[0]; return node && node.load && node.load.value >= ctx.metadata.upper_bound;"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "names = [:]; for (hit in ctx.payload.hits.hits){names[hit._id]=hit._source.node.name;}; fs_nodes=[]; for (timespan in ctx.payload.aggregations.node_stats.minutes.buckets){for (node in timespan.nodes.buckets){if (node && node.load && node.load.value >= ctx.metadata.upper_bound) {node.key=names[node.key];node.timestamp=timespan.key_as_string;node.load.value=node.load.value.round(2);fs_nodes.push(node);}}}; return fs_nodes;"
+      },
+      "logging": {
+        "text": "Load on nodes exceeds recommended bounds: \n {{#ctx.payload._value}}Node {{key}} exceeded bounds at {{timestamp}} with value {{load.value}}\n{{/ctx.payload._value}}"
+      }
+    }
+  }
+}
