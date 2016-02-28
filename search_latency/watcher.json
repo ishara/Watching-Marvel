@@ -1,7 +1,7 @@
-PUT /_watcher/watch/index_latency
+PUT /_watcher/watch/query_latency
 {
   "metadata": {
-    "max_index_latency": 50
+    "max_query_latency": 0.5
   },
   "trigger": {
     "schedule": {
@@ -35,33 +35,33 @@ PUT /_watcher/watch/index_latency
                 }
               },
               "aggs": {
-                "num_indexed": {
+                "query_total": {
                   "max": {
-                    "field": "node_stats.indices.indexing.index_total"
+                    "field": "node_stats.indices.search.query_total"
                   }
                 },
-                "index_time": {
+                "query_time": {
                   "max": {
-                    "field": "node_stats.indices.indexing.index_time_in_millis"
+                    "field": "node_stats.indices.search.query_time_in_millis"
                   }
                 },
-                "num_indexed_last_min": {
+                "num_queries_last_min": {
                   "derivative": {
-                    "buckets_path": "num_indexed"
+                    "buckets_path": "query_total"
                   }
                 },
-                "time_spent_indexing": {
+                "time_spent_querying": {
                   "derivative": {
-                    "buckets_path": "index_time"
+                    "buckets_path": "query_time"
                   }
                 },
-                "index_latency": {
+                "query_latency": {
                   "bucket_script": {
                     "buckets_path": {
-                      "num_indexed_last_min": "num_indexed_last_min",
-                      "time_spent_indexing": "time_spent_indexing"
+                      "num_queries_last_min": "num_queries_last_min",
+                      "time_spent_querying": "time_spent_querying"
                     },
-                    "script": "time_spent_indexing/num_indexed_last_min"
+                    "script": "time_spent_querying/num_queries_last_min"
                   }
                 }
               }
@@ -75,16 +75,16 @@ PUT /_watcher/watch/index_latency
   "throttle_period": "30m",
   "condition": {
     "script": {
-      "inline": "if (ctx.payload.aggregations.node_stats.buckets.size == 0) return false; latest = ctx.payload.aggregations.node_stats.buckets[-1]; return latest.index_latency.value > ctx.metadata.max_index_latency;"
+      "inline": "if (ctx.payload.aggregations.node_stats.buckets.size == 0) return false; latest = ctx.payload.aggregations.node_stats.buckets[-1]; return latest.query_latency.value > ctx.metadata.max_query_latency;"
     }
   },
   "actions": {
     "log": {
       "transform": {
-          "script": "ctx.payload.aggregations.node_stats.buckets[-1].index_latency.value = ctx.payload.aggregations.node_stats.buckets[-1].index_latency.value.round(2); return ctx.payload.aggregations.node_stats.buckets[-1];"
-        },
+        "script": "ctx.payload.aggregations.node_stats.buckets[-1].query_latency.value = ctx.payload.aggregations.node_stats.buckets[-1].query_latency.value.round(2); return ctx.payload.aggregations.node_stats.buckets[-1];"
+      },
       "logging": {
-        "text": "Indexing latency is {{ctx.payload.index_latency.value}}ms - exceededing requested threshold of {{ctx.metadata.max_index_latency}}ms"
+        "text": "Query latency is {{ctx.payload.query_latency.value}}ms - exceededing requested threshold of {{ctx.metadata.max_query_latency}}ms"
       }
     }
   }
