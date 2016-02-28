@@ -1,0 +1,78 @@
+PUT /_watcher/watch/split_brain
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats,node",
+        "body": {
+          "aggs": {
+            "node_stats": {
+              "filter": {
+                "bool": {
+                  "must": [
+                    {
+                      "range": {
+                        "timestamp": {
+                          "gte": "now-1m"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "aggs": {
+                "nodes": {
+                  "terms": {
+                    "field": "node_stats.node_master",
+                    "size": 100,
+                    "order": {
+                      "_term": "desc"
+                    }
+                  },
+                  "aggs": {
+                    "masters": {
+                      "terms": {
+                        "field": "node_stats.node_id",
+                        "size": 100
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "size": 100,
+          "post_filter": {
+            "term": {
+              "_type": {
+                "value": "node"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "def nodes=ctx.payload.aggregations.node_stats.nodes.buckets; if (nodes.size() == 0) return false; def node = nodes[0]; return node && node.masters && node.masters.buckets.size > 0;"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "names = [:]; for (hit in ctx.payload.hits.hits){names[hit._id]=hit._source.node.name;}; master_nodes = ctx.payload.aggregations.node_stats.nodes.buckets[0]; for (master in master_nodes.masters.buckets) {master.key=names[master.key];}; return master_nodes.masters.buckets;"
+      },
+      "logging": {
+        "text": "Potential Split Brain detected! The following nodes are masters:\n {{#ctx.payload._value}}{{key}}\n\n{{/ctx.payload._value}}"
+      }
+    }
+  }
+}
