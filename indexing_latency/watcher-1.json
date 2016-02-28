@@ -55,7 +55,7 @@ PUT /_watcher/watch/index_latency
                     "buckets_path": "index_time"
                   }
                 },
-                "indexing_rate": {
+                "index_latency": {
                   "bucket_script": {
                     "buckets_path": {
                       "num_indexed_last_min": "num_indexed_last_min",
@@ -75,16 +75,16 @@ PUT /_watcher/watch/index_latency
   "throttle_period": "30m",
   "condition": {
     "script": {
-      "inline": "if (ctx.payload.aggregations.node_stats.buckets.size == 0) return false; latest = ctx.payload.aggregations.node_stats.buckets[-1]; return latest.indexing_rate.value > ctx.metadata.max_index_latency;"
+      "inline": "if (ctx.payload.aggregations.node_stats.buckets.size == 0) return false; latest = ctx.payload.aggregations.node_stats.buckets[-1]; return latest.index_latency.value > ctx.metadata.max_index_latency;"
     }
   },
   "actions": {
     "log": {
       "transform": {
-          "script": "ctx.payload.aggregations.node_stats.buckets[-1].indexing_rate.value = ctx.payload.aggregations.node_stats.buckets[-1].indexing_rate.value.round(2); return ctx.payload.aggregations.node_stats.buckets[-1];"
+          "script": "ctx.payload.aggregations.node_stats.buckets[-1].index_latency.value = ctx.payload.aggregations.node_stats.buckets[-1].index_latency.value.round(2); return ctx.payload.aggregations.node_stats.buckets[-1];"
         },
       "logging": {
-        "text": "Indexing latency is {{ctx.payload.indexing_rate.value}} - exceededing requested threshold of {{ctx.metadata.max_index_latency}}"
+        "text": "Indexing latency is {{ctx.payload.index_latency.value}} - exceededing requested threshold of {{ctx.metadata.max_index_latency}}"
       }
     }
   }
