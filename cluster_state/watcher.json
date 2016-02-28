@@ -23,7 +23,7 @@ PUT /_watcher/watch/cluster_state
                     {
                       "range": {
                         "timestamp": {
-                          "gt": "now-70s"
+                          "gte": "now-70s"
                         }
                       }
                     },

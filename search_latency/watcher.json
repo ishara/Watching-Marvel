@@ -1,0 +1,91 @@
+PUT /_watcher/watch/query_latency
+{
+  "metadata": {
+    "max_query_latency": 0.5
+  },
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats",
+        "body": {
+          "query": {
+            "bool": {
+              "filter": {
+                "range": {
+                  "timestamp": {
+                    "gte": "now-2m"
+                  }
+                }
+              }
+            }
+          },
+          "aggs": {
+            "node_stats": {
+              "date_histogram": {
+                "field": "timestamp",
+                "interval": "1m",
+                "order": {
+                  "_key": "asc"
+                }
+              },
+              "aggs": {
+                "query_total": {
+                  "max": {
+                    "field": "node_stats.indices.search.query_total"
+                  }
+                },
+                "query_time": {
+                  "max": {
+                    "field": "node_stats.indices.search.query_time_in_millis"
+                  }
+                },
+                "num_queries_last_min": {
+                  "derivative": {
+                    "buckets_path": "query_total"
+                  }
+                },
+                "time_spent_querying": {
+                  "derivative": {
+                    "buckets_path": "query_time"
+                  }
+                },
+                "query_latency": {
+                  "bucket_script": {
+                    "buckets_path": {
+                      "num_queries_last_min": "num_queries_last_min",
+                      "time_spent_querying": "time_spent_querying"
+                    },
+                    "script": "time_spent_querying/num_queries_last_min"
+                  }
+                }
+              }
+            }
+          },
+          "size": 0
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "if (ctx.payload.aggregations.node_stats.buckets.size == 0) return false; latest = ctx.payload.aggregations.node_stats.buckets[-1]; return latest.query_latency.value > ctx.metadata.max_query_latency;"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "ctx.payload.aggregations.node_stats.buckets[-1].query_latency.value = ctx.payload.aggregations.node_stats.buckets[-1].query_latency.value.round(2); return ctx.payload.aggregations.node_stats.buckets[-1];"
+      },
+      "logging": {
+        "text": "Query latency is {{ctx.payload.query_latency.value}}ms - exceededing requested threshold of {{ctx.metadata.max_query_latency}}ms"
+      }
+    }
+  }
+}
