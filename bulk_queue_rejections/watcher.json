@@ -1,0 +1,72 @@
+PUT /_watcher/watch/bulk_queue_rejections
+{
+  "metadata": {
+    "max_rate_rejections_min": 10
+  },
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats",
+        "body": {
+          "query": {
+            "bool": {
+              "filter": {
+                "range": {
+                  "timestamp": {
+                    "gte": "now-2m"
+                  }
+                }
+              }
+            }
+          },
+          "aggs": {
+            "node_stats": {
+              "date_histogram": {
+                "field": "timestamp",
+                "interval": "1m",
+                "order": {
+                  "_key": "asc"
+                }
+              },
+              "aggs": {
+                "bulk_rejections": {
+                  "max": {
+                    "field": "node_stats.thread_pool.bulk.rejected"
+                  }
+                },
+                "bulk_rejections_last_min": {
+                  "derivative": {
+                    "buckets_path": "bulk_rejections"
+                  }
+                }
+              }
+            }
+          },
+          "size": 0
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "if (ctx.payload.aggregations.node_stats.buckets.size == 0) return false; latest = ctx.payload.aggregations.node_stats.buckets[-1]; return latest.bulk_rejections_last_min.value > ctx.metadata.max_rate_rejections_min;"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "ctx.payload.aggregations.node_stats.buckets[-1].bulk_rejections_last_min.value=ctx.payload.aggregations.node_stats.buckets[-1].bulk_rejections_last_min.value.toInteger(); return ctx.payload.aggregations.node_stats.buckets[-1];"
+      },
+      "logging": {
+        "text": "{{ctx.payload.bulk_rejections_last_min.value}} bulk queue rejections in the last min - exceeding threshold of {{ctx.metadata.max_rate_rejections_min}}"
+      }
+    }
+  }
+}
