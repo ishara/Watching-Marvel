@@ -1,7 +1,7 @@
-PUT /_watcher/watch/bulk_queue_rejections
+PUT /_watcher/watch/index_queue_rejections
 {
   "metadata": {
-    "max_rate_rejections_min": 10
+    "max_rate_rejections_min": 0
   },
   "trigger": {
     "schedule": {
@@ -35,14 +35,14 @@ PUT /_watcher/watch/bulk_queue_rejections
                 }
               },
               "aggs": {
-                "bulk_rejections": {
+                "index_rejections": {
                   "max": {
-                    "field": "node_stats.thread_pool.bulk.rejected"
+                    "field": "node_stats.thread_pool.index.rejected"
                   }
                 },
-                "bulk_rejections_last_min": {
+                "index_rejections_last_min": {
                   "derivative": {
-                    "buckets_path": "bulk_rejections"
+                    "buckets_path": "index_rejections"
                   }
                 }
               }
@@ -56,16 +56,16 @@ PUT /_watcher/watch/bulk_queue_rejections
   "throttle_period": "30m",
   "condition": {
     "script": {
-      "inline": "if (ctx.payload.aggregations.node_stats.buckets.size == 0) return false; latest = ctx.payload.aggregations.node_stats.buckets[-1]; return latest.bulk_rejections_last_min.value > ctx.metadata.max_rate_rejections_min;"
+      "inline": "if (ctx.payload.aggregations.node_stats.buckets.size == 0) return false; latest = ctx.payload.aggregations.node_stats.buckets[-1]; return latest.index_rejections_last_min.value > ctx.metadata.max_rate_rejections_min;"
     }
   },
   "actions": {
     "log": {
       "transform": {
-        "script": "ctx.payload.aggregations.node_stats.buckets[-1].bulk_rejections_last_min.value=ctx.payload.aggregations.node_stats.buckets[-1].bulk_rejections_last_min.value.toInteger(); return ctx.payload.aggregations.node_stats.buckets[-1];"
+        "script": "ctx.payload.aggregations.node_stats.buckets[-1].index_rejections_last_min.value=ctx.payload.aggregations.node_stats.buckets[-1].index_rejections_last_min.value.toInteger(); return ctx.payload.aggregations.node_stats.buckets[-1];"
       },
       "logging": {
-        "text": "{{ctx.payload.bulk_rejections_last_min.value}} bulk queue rejections in the last min - exceeding threshold of {{ctx.metadata.max_rate_rejections_min}}"
+        "text": "{{ctx.payload.index_rejections_last_min.value}} index rejections in the last min"
       }
     }
   }
