@@ -1,0 +1,76 @@
+PUT /_watcher/watch/cluster_state
+{
+  "metadata": {
+    "not_green_secs": 60,
+    "marvel_update_interval": 10
+  },
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "cluster_state",
+        "body": {
+          "query": {
+            "bool": {
+              "filter": {
+                "bool": {
+                  "must": [
+                    {
+                      "range": {
+                        "timestamp": {
+                          "gt": "now-70s"
+                        }
+                      }
+                    },
+                    {
+                      "terms": {
+                        "cluster_state.status": [
+                          "red",
+                          "yellow"
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "aggs": {
+            "cluster_state": {
+              "terms": {
+                "field": "cluster_state.status",
+                "size": 1
+              }
+            }
+          },
+          "size": 1,
+          "sort": [
+            {
+              "timestamp": {
+                "order": "desc"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "is_green=status_period = (ctx.payload.hits.total == 0); status_period = (ctx.payload.aggregations.cluster_state.buckets.size > 0); if (status_period && !is_green) {num_status=ctx.metadata.not_green_secs/ctx.metadata.marvel_update_interval; period=0; for (status in ctx.payload.aggregations.cluster_state.buckets){period=status.doc_count+period;}; return (period >= num_status);}; return false;"
+    }
+  },
+  "actions": {
+    "log": {
+      "logging": {
+        "text": "Cluster state has NOT been green for more than {{ctx.metadata.not_green_secs}}s.  Cluster is currently {{ctx.payload.hits.hits.0._source.cluster_state.status}}"
+      }
+    }
+  }
+}

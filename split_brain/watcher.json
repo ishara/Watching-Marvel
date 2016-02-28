@@ -5,9 +5,6 @@ PUT /_watcher/watch/split_brain
       "interval": "1s"
     }
   },
-  "metadata": {
-    "upper_bound": 50
-  },
   "input": {
     "search": {
       "request": {
@@ -71,7 +68,7 @@ PUT /_watcher/watch/split_brain
   "actions": {
     "log": {
       "transform": {
-        "script": "names = [:]; for (hit in ctx.payload.hits.hits){names[hit._id]=hit._source.node.name;}; master_nodes = ctx.payload.aggregations.node_stats.nodes.buckets[0]; for (master in master_nodes.masters.buckets) {master.key=names[master.key];}; return master_nodes.masters.buckets"
+        "script": "names = [:]; for (hit in ctx.payload.hits.hits){names[hit._id]=hit._source.node.name;}; master_nodes = ctx.payload.aggregations.node_stats.nodes.buckets[0]; for (master in master_nodes.masters.buckets) {master.key=names[master.key];}; return master_nodes.masters.buckets;"
       },
       "logging": {
         "text": "Potential Split Brain detected! The following nodes are masters:\n {{#ctx.payload._value}}{{key}}\n\n{{/ctx.payload._value}}"
