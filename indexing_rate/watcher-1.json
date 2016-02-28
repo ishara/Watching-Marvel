@@ -1,0 +1,91 @@
+PUT /_watcher/watch/index_latency
+{
+  "metadata": {
+    "max_index_latency": 50
+  },
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats",
+        "body": {
+          "query": {
+            "bool": {
+              "filter": {
+                "range": {
+                  "timestamp": {
+                    "gte": "now-2m"
+                  }
+                }
+              }
+            }
+          },
+          "aggs": {
+            "node_stats": {
+              "date_histogram": {
+                "field": "timestamp",
+                "interval": "1m",
+                "order": {
+                  "_key": "asc"
+                }
+              },
+              "aggs": {
+                "num_indexed": {
+                  "max": {
+                    "field": "node_stats.indices.indexing.index_total"
+                  }
+                },
+                "index_time": {
+                  "max": {
+                    "field": "node_stats.indices.indexing.index_time_in_millis"
+                  }
+                },
+                "num_indexed_last_min": {
+                  "derivative": {
+                    "buckets_path": "num_indexed"
+                  }
+                },
+                "time_spent_indexing": {
+                  "derivative": {
+                    "buckets_path": "index_time"
+                  }
+                },
+                "indexing_rate": {
+                  "bucket_script": {
+                    "buckets_path": {
+                      "num_indexed_last_min": "num_indexed_last_min",
+                      "time_spent_indexing": "time_spent_indexing"
+                    },
+                    "script": "time_spent_indexing/num_indexed_last_min"
+                  }
+                }
+              }
+            }
+          },
+          "size": 0
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "if (ctx.payload.aggregations.node_stats.buckets.size == 0) return false; latest = ctx.payload.aggregations.node_stats.buckets[-1]; return latest.indexing_rate.value > ctx.metadata.max_index_latency;"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+          "script": "ctx.payload.aggregations.node_stats.buckets[-1].indexing_rate.value = ctx.payload.aggregations.node_stats.buckets[-1].indexing_rate.value.round(2); return ctx.payload.aggregations.node_stats.buckets[-1];"
+        },
+      "logging": {
+        "text": "Indexing latency is {{ctx.payload.indexing_rate.value}} - exceededing requested threshold of {{ctx.metadata.max_index_latency}}"
+      }
+    }
+  }
+}
