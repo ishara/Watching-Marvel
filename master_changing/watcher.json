@@ -1,0 +1,78 @@
+PUT /_watcher/watch/master_changing
+{
+  "metadata": {
+    "marvel_update_interval": 10,
+    "max_changes": 2,
+    "time_period": 300
+  },
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats",
+        "body": {
+          "aggs": {
+            "node_stats": {
+              "date_histogram": {
+                "field": "timestamp",
+                "interval": "{{ctx.metadata.marvel_update_interval}}s"
+              },
+              "aggs": {
+                "node_id": {
+                  "terms": {
+                    "field": "node_stats.node_id",
+                    "size": 10
+                  }
+                }
+              }
+            }
+          },
+          "size": 0,
+          "query": {
+            "bool": {
+              "filter": {
+                "bool": {
+                  "must": [
+                    {
+                      "term": {
+                        "node_stats.node_master": "true"
+                      }
+                    },
+                    {
+                      "range": {
+                        "timestamp": {
+                          "gte": "now-{{ctx.metadata.time_period}}s"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "if (ctx.payload.aggregations.node_stats.buckets.size == 0) return false; first = ctx.payload.aggregations.node_stats.buckets[0]; current_master=first.node_id.buckets[0].key; changes=0; ctx.payload.aggregations.node_stats.buckets.each({ if (it.node_id.buckets.size > 0 && !current_master.equalsIgnoreCase(it.node_id.buckets[0].key)) {changes=changes+1; current_master=it.node_id.buckets[0].key;};}); return changes >= ctx.metadata.max_changes;"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "first = ctx.payload.aggregations.node_stats.buckets[0]; current_master=first.node_id.buckets[0].key; changes=0; ctx.payload.aggregations.node_stats.buckets.each({ if (it.node_id.buckets.size > 0 && !current_master.equalsIgnoreCase(it.node_id.buckets[0].key)) {changes=changes+1; current_master=it.node_id.buckets[0].key;};}); return changes;"
+      },
+      "logging": {
+        "text": "Master is changing frequently. It has changed {{ctx.payload._value}} times in the last {{ctx.metadata.time_period}} seconds"
+      }
+    }
+  }
+}
