@@ -1,0 +1,59 @@
+PUT /_watcher/watch/thread_pools
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "metadata": {
+    "max_bulk_queue_size": 200,
+    "min_bulk_queue_size": 50
+  },
+  "input": {
+    "chain": {
+      "inputs": [
+        {
+          "marvel": {
+            "search": {
+              "request": {
+                "indices": ".marvel-es-*",
+                "types": "node",
+                "body": {
+                  "size": 100,
+                  "_source": "node.name"
+                }
+              }
+            }
+          }
+        },
+        {
+          "cluster": {
+            "http": {
+              "request": {
+                "host": "localhost",
+                "port": 9201,
+                "path": "/_nodes/_all/settings"
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "cluster_nodes = ctx.payload.cluster.nodes; if (cluster_nodes.size() == 0) return false; return cluster_nodes.any({ key, value -> value.settings && value.settings.threadpool && (value.settings.threadpool.search || value.settings.threadpool.percolate || value.settings.threadpool.index || value.settings.threadpool.refresh || value.settings.threadpool.suggest || (value.settings.threadpool.bulk && (value.settings.threadpool.bulk.queue_size.toInteger() > ctx.metadata.max_bulk_queue_size || value.settings.threadpool.bulk.queue_size.toInteger() < ctx.metadata.min_bulk_queue_size || value.settings.threadpool.bulk.size)))});"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "names = [:]; for (hit in ctx.payload.marvel.hits.hits){names[hit._id]=hit._source.node.name;}; changes = []; ctx.payload.cluster.nodes.each({ node_id, value -> if (value.settings && value.settings.threadpool){value.settings.threadpool.each({pool, settings -> if (!pool.equalsIgnoreCase('watcher') && !pool.equalsIgnoreCase('bulk')) {changes.push(names[node_id]+' - '+pool +' - '+settings);}  else if (pool.equalsIgnoreCase('bulk') && (settings.queue_size.toInteger() > ctx.metadata.max_bulk_queue_size || settings.queue_size.toInteger() < ctx.metadata.min_bulk_queue_size || settings.size)) {changes.push(names[node_id]+' - '+pool +' - '+settings);}})};}); return changes;"
+      },
+      "logging": {
+        "text": "Threadpools have been modified outside of recommended settings for the following nodes: \n {{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
+      }
+    }
+  }
+}
