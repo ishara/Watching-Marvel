@@ -1,0 +1,106 @@
+PUT /_watcher/watch/query_response_time
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "metadata":{
+    "window_size":"30s",
+    "time_range":"now-2h"
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats,node",
+        "body": {
+          "post_filter": {
+            "term": {
+              "_type": {
+                "value": "node"
+              }
+            }
+          },
+          "aggs": {
+            "node_stats": {
+              "filter": {
+                "bool": {
+                  "must": [
+                    {
+                      "range": {
+                        "timestamp": {
+                          "gte": "{{ctx.metadata.time_range}}"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "aggs": {
+                "nodes": {
+                  "terms": {
+                    "field": "node_stats.node_id",
+                    "size": 100
+                  },
+                  "aggs": {
+                    "timeslots": {
+                      "date_histogram": {
+                        "field": "timestamp",
+                        "interval": "{{ctx.metadata.window_size}}"
+                      },
+                      "aggs": {
+                        "query_total": {
+                          "max": {
+                            "field": "node_stats.indices.search.query_total"
+                          }
+                        },
+                        "query_time": {
+                          "max": {
+                            "field": "node_stats.indices.search.query_time_in_millis"
+                          }
+                        },
+                        "avg_response_time": {
+                          "bucket_script": {
+                            "buckets_path": {
+                              "query_time": "query_time",
+                              "query_total": "query_total"
+                            },
+                            "script": "query_time / query_total"
+                          }
+                        }
+                      }
+                    },
+                    "extendedStats": {
+                      "extended_stats_bucket": {
+                        "buckets_path": "timeslots > avg_response_time",
+                        "sigma": 2.0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "size": 100
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "return ctx.payload.aggregations.node_stats.nodes.buckets.any({it.timeslots.buckets.size > 0 && (it.timeslots.buckets[-1].avg_response_time.value > it.extendedStats.std_deviation_bounds.upper)});"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; return ctx.payload.aggregations.node_stats.nodes.buckets.collect({ if (it.timeslots.buckets[-1].avg_response_time.value > it.extendedStats.std_deviation_bounds.upper){return names[it.key]+' - '+it.timeslots.buckets[-1].avg_response_time.value.round(2);}});"
+      },
+      "logging": {
+        "text": "Average query response time - query has moved outside normal bounds:{{ctx.payload}}\n{{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
+      }
+    }
+  }
+}
