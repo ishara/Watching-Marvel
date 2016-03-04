@@ -1,14 +1,13 @@
 PUT /_watcher/watch/query_response_time
 {
-  "metadata": {
-    "max_avg_response_time": 0.3,
-    "percentile_bound": 0.3,
-    "marvel_update_interval": 10
-  },
   "trigger": {
     "schedule": {
       "interval": "1s"
     }
+  },
+  "metadata":{
+    "window_size":"30s",
+    "time_range":"now-2h"
   },
   "input": {
     "search": {
@@ -31,7 +30,7 @@ PUT /_watcher/watch/query_response_time
                     {
                       "range": {
                         "timestamp": {
-                          "gte": "now-2m"
+                          "gte": "{{ctx.metadata.time_range}}"
                         }
                       }
                     }
@@ -42,13 +41,13 @@ PUT /_watcher/watch/query_response_time
                 "nodes": {
                   "terms": {
                     "field": "node_stats.node_id",
-                    "size": 10
+                    "size": 100
                   },
                   "aggs": {
                     "timeslots": {
                       "date_histogram": {
                         "field": "timestamp",
-                        "interval": "10s"
+                        "interval": "{{ctx.metadata.window_size}}"
                       },
                       "aggs": {
                         "query_total": {
@@ -69,26 +68,13 @@ PUT /_watcher/watch/query_response_time
                             },
                             "script": "query_time / query_total"
                           }
-                        },
-                        "moving_query_avg": {
-                          "moving_avg": {
-                            "buckets_path": "avg_response_time",
-                            "model": "holt",
-                            "window": 10,
-                            "settings": {
-                              "alpha": 0.5,
-                              "beta": 0.2
-                            }
-                          }
                         }
                       }
                     },
-                    "percentiles_avg": {
-                      "percentiles_bucket": {
-                        "buckets_path": "timeslots>avg_response_time",
-                        "percents": [
-                          99.0
-                        ]
+                    "extendedStats": {
+                      "extended_stats_bucket": {
+                        "buckets_path": "timeslots > avg_response_time",
+                        "sigma": 2.0
                       }
                     }
                   }
@@ -104,16 +90,16 @@ PUT /_watcher/watch/query_response_time
   "throttle_period": "30m",
   "condition": {
     "script": {
-      "inline": "p_bound_exceeded = ctx.payload.aggregations.node_stats.nodes.buckets.any({it.percentiles_avg.values['99.0'] > ctx.metadata.percentile_bound}); return p_bound_exceeded;"
+      "inline": "return ctx.payload.aggregations.node_stats.nodes.buckets.any({it.timeslots.buckets.size > 0 && (it.timeslots.buckets[-1].avg_response_time.value > it.extendedStats.std_deviation_bounds.upper)});"
     }
   },
   "actions": {
     "log": {
       "transform": {
-        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; results=[]; ctx.payload.aggregations.node_stats.nodes.buckets.each({if (it.percentiles_avg.values['99.0'] > ctx.metadata.percentile_bound) { results.push(names[it.key] +' - '+ it.percentiles_avg.values['99.0'].round(2)+'ms');}}); return results;"
+        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; return ctx.payload.aggregations.node_stats.nodes.buckets.collect({ if (it.timeslots.buckets[-1].avg_response_time.value > it.extendedStats.std_deviation_bounds.upper){return names[it.key]+' - '+it.timeslots.buckets[-1].avg_response_time.value.round(2);}});"
       },
       "logging": {
-        "text": "Average query response time has exceeded pre-configured bounds on the following nodes:\n {{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}} "
+        "text": "Average query response time - query has moved outside normal bounds:{{ctx.payload}}\n{{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
       }
     }
   }
