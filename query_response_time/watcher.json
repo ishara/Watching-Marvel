@@ -104,13 +104,13 @@ PUT /_watcher/watch/query_response_time
   "throttle_period": "30m",
   "condition": {
     "script": {
-      "inline": "return ctx.payload.aggregations.node_stats.nodes.buckets.any({it.percentiles_avg.values['99.0'] > ctx.metadata.percentile_bound});"
+      "inline": "p_bound_exceeded = ctx.payload.aggregations.node_stats.nodes.buckets.any({it.percentiles_avg.values['99.0'] > ctx.metadata.percentile_bound}); return p_bound_exceeded;"
     }
   },
   "actions": {
     "log": {
       "transform": {
-        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; return ctx.payload.aggregations.node_stats.nodes.buckets.collect({ if (it.percentiles_avg.values['99.0'] > ctx.metadata.percentile_bound) { names[it.key] +' - '+ it.percentiles_avg.values['99.0'].round(2)+'ms'};});"
+        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; results=[]; ctx.payload.aggregations.node_stats.nodes.buckets.each({if (it.percentiles_avg.values['99.0'] > ctx.metadata.percentile_bound) { results.push(names[it.key] +' - '+ it.percentiles_avg.values['99.0'].round(2)+'ms');}}); return results;"
       },
       "logging": {
         "text": "Average query response time has exceeded pre-configured bounds on the following nodes:\n {{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}} "
