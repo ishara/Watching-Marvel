@@ -1,0 +1,105 @@
+PUT /_watcher/watch/cpu_increasing
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "metadata": {
+    "window_size": "30s",
+    "time_range": "2h",
+    "threshold_increase":1
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats,node",
+        "body": {
+          "post_filter": {
+            "term": {
+              "_type": {
+                "value": "node"
+              }
+            }
+          },
+          "aggs": {
+            "node_stats": {
+              "filter": {
+                "bool": {
+                  "must": [
+                    {
+                      "range": {
+                        "timestamp": {
+                          "gte": "now-{{ctx.metadata.time_range}}"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "aggs": {
+                "nodes": {
+                  "terms": {
+                    "field": "node_stats.node_id",
+                    "size": 100
+                  },
+                  "aggs": {
+                    "timeslots": {
+                      "date_histogram": {
+                        "field": "timestamp",
+                        "interval": "{{ctx.metadata.window_size}}",
+                        "min_doc_count": 0
+                      },
+                      "aggs": {
+                        "cpu_usage": {
+                          "max": {
+                            "field": "node_stats.process.cpu.percent"
+                          }
+                        },
+                        "moving_average": {
+                          "moving_avg": {
+                            "buckets_path": "cpu_usage",
+                            "model": "ewma",
+                            "window": 120
+                          }
+                        },
+                        "avg_change": {
+                          "derivative": {
+                            "buckets_path": "cpu_usage"
+                          }
+                        }
+                      }
+                    },
+                    "sum": {
+                      "sum_bucket": {
+                        "buckets_path": "timeslots>avg_change"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "size": 100
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "return ctx.payload.aggregations.node_stats.nodes.buckets.any({it.sum.value.round(2) > ctx.metadata.threshold_increase});"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; nodes=[]; ctx.payload.aggregations.node_stats.nodes.buckets.collect({if (it.sum.value.round(2) > ctx.metadata.threshold_increase) {nodes.push(names[it.key]+' ('+it.sum.value.round(2)+'%)');}}); return nodes;"
+      },
+      "logging": {
+        "text": "CPU Usage has increased in the last {{ctx.metadata.time_range}} for the following nodes by more than {{ctx.metadata.threshold_increase}}%:\n{{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
+      }
+    }
+  }
+}
