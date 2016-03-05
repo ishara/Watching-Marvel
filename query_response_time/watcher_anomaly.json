@@ -74,7 +74,7 @@ PUT /_watcher/watch/query_response_time
                     "extendedStats": {
                       "extended_stats_bucket": {
                         "buckets_path": "timeslots > avg_response_time",
-                        "sigma": 2.0
+                        "sigma": 3.0
                       }
                     }
                   }
@@ -99,7 +99,7 @@ PUT /_watcher/watch/query_response_time
         "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; return ctx.payload.aggregations.node_stats.nodes.buckets.collect({ if (it.timeslots.buckets[-1].avg_response_time.value > it.extendedStats.std_deviation_bounds.upper){return names[it.key]+' - '+it.timeslots.buckets[-1].avg_response_time.value.round(2);}});"
       },
       "logging": {
-        "text": "Average query response time - query has moved outside normal bounds:{{ctx.payload}}\n{{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
+        "text": "Average query response time - query has moved outside normal bounds on the following nodes:\n{{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
       }
     }
   }
