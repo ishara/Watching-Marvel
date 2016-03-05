@@ -74,7 +74,8 @@ PUT /_watcher/watch/query_response_time_increasing
                           "moving_avg": {
                             "buckets_path": "avg_response_time",
                             "model": "ewma",
-                            "window": 120
+                            "window": 120,
+                            "gap_policy": "insert_zeros"
                           }
                         },
                         "avg_change": {

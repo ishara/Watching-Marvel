@@ -8,7 +8,7 @@ PUT /_watcher/watch/cpu_increasing
   "metadata": {
     "window_size": "30s",
     "time_range": "2h",
-    "threshold_increase":1
+    "threshold_increase":10
   },
   "input": {
     "search": {
@@ -61,12 +61,13 @@ PUT /_watcher/watch/cpu_increasing
                           "moving_avg": {
                             "buckets_path": "cpu_usage",
                             "model": "ewma",
-                            "window": 120
+                            "window": 120,
+                            "gap_policy": "insert_zeros"
                           }
                         },
                         "avg_change": {
                           "derivative": {
-                            "buckets_path": "cpu_usage"
+                            "buckets_path": "moving_average"
                           }
                         }
                       }
