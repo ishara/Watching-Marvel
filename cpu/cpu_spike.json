@@ -1,13 +1,13 @@
-PUT /_watcher/watch/query_response_time
+PUT /_watcher/watch/cpu_spike
 {
   "trigger": {
     "schedule": {
       "interval": "1s"
     }
   },
-  "metadata":{
-    "window_size":"30s",
-    "time_range":"now-2h"
+  "metadata": {
+    "window_size": "30s",
+    "time_range": "2h"
   },
   "input": {
     "search": {
@@ -30,7 +30,7 @@ PUT /_watcher/watch/query_response_time
                     {
                       "range": {
                         "timestamp": {
-                          "gte": "{{ctx.metadata.time_range}}"
+                          "gte": "now-{{ctx.metadata.time_range}}"
                         }
                       }
                     }
@@ -50,30 +50,23 @@ PUT /_watcher/watch/query_response_time
                         "interval": "{{ctx.metadata.window_size}}"
                       },
                       "aggs": {
-                        "query_total": {
+                        "cpu_usage": {
                           "max": {
-                            "field": "node_stats.indices.search.query_total"
+                            "field": "node_stats.process.cpu.percent"
                           }
                         },
-                        "query_time": {
-                          "max": {
-                            "field": "node_stats.indices.search.query_time_in_millis"
-                          }
-                        },
-                        "avg_response_time": {
-                          "bucket_script": {
-                            "buckets_path": {
-                              "query_time": "query_time",
-                              "query_total": "query_total"
-                            },
-                            "script": "query_time / query_total"
+                        "moving_average": {
+                          "moving_avg": {
+                            "buckets_path": "cpu_usage",
+                            "model": "ewma",
+                            "window": 1200
                           }
                         }
                       }
                     },
                     "extendedStats": {
                       "extended_stats_bucket": {
-                        "buckets_path": "timeslots > avg_response_time",
+                        "buckets_path": "timeslots > cpu_usage",
                         "sigma": 3.0
                       }
                     }
@@ -90,16 +83,16 @@ PUT /_watcher/watch/query_response_time
   "throttle_period": "30m",
   "condition": {
     "script": {
-      "inline": "return ctx.payload.aggregations.node_stats.nodes.buckets.any({it.timeslots.buckets.size > 0 && (it.timeslots.buckets[-1].avg_response_time.value > it.extendedStats.std_deviation_bounds.upper)});"
+      "inline": "return ctx.payload.aggregations.node_stats.nodes.buckets.any({it.timeslots.buckets[-1].moving_average.value.round(2) > it.extendedStats.std_deviation_bounds.upper});"
     }
   },
   "actions": {
     "log": {
       "transform": {
-        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; return ctx.payload.aggregations.node_stats.nodes.buckets.collect({ if (it.timeslots.buckets[-1].avg_response_time.value > it.extendedStats.std_deviation_bounds.upper){return names[it.key]+' - '+it.timeslots.buckets[-1].avg_response_time.value.round(2);}});"
+        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; nodes=[]; ctx.payload.aggregations.node_stats.nodes.buckets.collect({if (it.timeslots.buckets[-1].moving_average.value.round(2) > it.extendedStats.std_deviation_bounds.upper) {nodes.push(names[it.key]+' ('+it.timeslots.buckets[-1].moving_average.value+'-'+it.timeslots.buckets[-1].moving_average.value.round(2)+'%)');}}); return nodes;"
       },
       "logging": {
-        "text": "Average query response time - query has moved outside normal bounds on the following nodes:\n{{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
+        "text": "CPU Usage has moved outside normal bound on the following nodess:\n{{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}} "
       }
     }
   }

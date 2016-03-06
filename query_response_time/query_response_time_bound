@@ -1,13 +1,14 @@
-PUT /_watcher/watch/query_response_time
+PUT /_watcher/watch/query_response_time_bound
 {
   "trigger": {
     "schedule": {
       "interval": "1s"
     }
   },
-  "metadata":{
-    "window_size":"30s",
-    "time_range":"now-2h"
+  "metadata": {
+    "window_size": "30s",
+    "time_range": "1h",
+    "max_average_time": 1000
   },
   "input": {
     "search": {
@@ -30,7 +31,7 @@ PUT /_watcher/watch/query_response_time
                     {
                       "range": {
                         "timestamp": {
-                          "gte": "{{ctx.metadata.time_range}}"
+                          "gte": "now-{{ctx.metadata.time_range}}"
                         }
                       }
                     }
@@ -41,7 +42,7 @@ PUT /_watcher/watch/query_response_time
                 "nodes": {
                   "terms": {
                     "field": "node_stats.node_id",
-                    "size": 100
+                    "size": 10
                   },
                   "aggs": {
                     "timeslots": {
@@ -68,13 +69,14 @@ PUT /_watcher/watch/query_response_time
                             },
                             "script": "query_time / query_total"
                           }
+                        },
+                        "moving_average": {
+                          "moving_avg": {
+                            "buckets_path": "avg_response_time",
+                            "model": "ewma",
+                            "window": 120
+                          }
                         }
-                      }
-                    },
-                    "extendedStats": {
-                      "extended_stats_bucket": {
-                        "buckets_path": "timeslots > avg_response_time",
-                        "sigma": 3.0
                       }
                     }
                   }
@@ -90,16 +92,16 @@ PUT /_watcher/watch/query_response_time
   "throttle_period": "30m",
   "condition": {
     "script": {
-      "inline": "return ctx.payload.aggregations.node_stats.nodes.buckets.any({it.timeslots.buckets.size > 0 && (it.timeslots.buckets[-1].avg_response_time.value > it.extendedStats.std_deviation_bounds.upper)});"
+      "inline": "return ctx.payload.aggregations.node_stats.nodes.buckets.any({it.timeslots.buckets[-1].moving_average.value > ctx.metadata.max_average_time});"
     }
   },
   "actions": {
     "log": {
       "transform": {
-        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; return ctx.payload.aggregations.node_stats.nodes.buckets.collect({ if (it.timeslots.buckets[-1].avg_response_time.value > it.extendedStats.std_deviation_bounds.upper){return names[it.key]+' - '+it.timeslots.buckets[-1].avg_response_time.value.round(2);}});"
+        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; nodes=[]; ctx.payload.aggregations.node_stats.nodes.buckets.collect({if (it.timeslots.buckets[-1].moving_average.value > ctx.metadata.max_average_time) {nodes.push(names[it.key]+' ('+it.timeslots.buckets[-1].moving_average.value.round(2)+'ms)');}}); return nodes;"
       },
       "logging": {
-        "text": "Average query response time - query has moved outside normal bounds on the following nodes:\n{{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
+        "text": "Average query response time has exceeded the required threshold of {{ctx.metadata.max_average_time}}ms on the following nodes:\n{{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
       }
     }
   }
