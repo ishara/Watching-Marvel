@@ -7,7 +7,7 @@ PUT /_watcher/watch/old_gc_time
   },
   "metadata": {
     "window_size": "5m",
-    "max_gc_time": 30
+    "max_gc_time": 30000
   },
   "input": {
     "search": {
@@ -84,7 +84,7 @@ PUT /_watcher/watch/old_gc_time
         "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; return ctx.payload.aggregations.node_stats.nodes.buckets.collect({ if ((it.timeslots.buckets.size > 0) && (it.timeslots.buckets[-1].gc_time_spent.value > ctx.metadata.max_gc_time))names[it.key]+' ('+it.timeslots.buckets[-1].gc_time_spent.value+')'});"
       },
       "logging": {
-        "text": "More than {{ctx.metadata.max_gc_time}}s has been spent on major GC's the following nodes in the last {{ctx.metadata.window_size}}:\n {{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
+        "text": "More than {{ctx.metadata.max_gc_time}}ms has been spent on major GC's the following nodes in the last {{ctx.metadata.window_size}}:\n {{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
       }
     }
   }
