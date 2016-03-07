@@ -1,0 +1,112 @@
+PUT /_watcher/watch/old_gcs
+{
+  "trigger": {
+    "schedule": {
+      "interval": "1s"
+    }
+  },
+  "metadata": {
+    "window_size": "10m",
+    "max_gc_time": 30000,
+    "max_gc_count":1
+  },
+  "input": {
+    "search": {
+      "request": {
+        "indices": ".marvel-es-*",
+        "types": "node_stats,node",
+        "body": {
+          "post_filter": {
+            "term": {
+              "_type": {
+                "value": "node"
+              }
+            }
+          },
+          "aggs": {
+            "node_stats": {
+              "filter": {
+                "bool": {
+                  "must": [
+                    {
+                      "range": {
+                        "timestamp": {
+                          "gte": "now-{{ctx.metadata.window_size}}"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "aggs": {
+                "nodes": {
+                  "terms": {
+                    "field": "node_stats.node_id",
+                    "size": 100
+                  },
+                  "aggs": {
+                    "timeslots": {
+                      "date_histogram": {
+                        "field": "timestamp",
+                        "interval": "1m"
+                      },
+                      "aggs": {
+                        "gc_time": {
+                          "max": {
+                            "field": "node_stats.jvm.gc.collectors.old.collection_time_in_millis"
+                          }
+                        },
+                        "gc_count": {
+                          "max": {
+                            "field": "node_stats.jvm.gc.collectors.old.collection_count"
+                          }
+                        },
+                        "gc_time_diff": {
+                          "derivative": {
+                            "buckets_path": "gc_time"
+                          }
+                        },
+                        "gc_count_diff": {
+                          "derivative": {
+                            "buckets_path": "gc_count"
+                          }
+                        }
+                      }
+                    },
+                    "total_gc_time_spent": {
+                      "sum_bucket": {
+                        "buckets_path": "timeslots>gc_time_diff"
+                      }
+                    },
+                    "total_gc_count": {
+                      "sum_bucket": {
+                        "buckets_path": "timeslots>gc_count_diff"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "size": 100
+        }
+      }
+    }
+  },
+  "throttle_period": "30m",
+  "condition": {
+    "script": {
+      "inline": "return ctx.payload.aggregations.node_stats.nodes.buckets.any({it.total_gc_time_spent.value > ctx.metadata.max_gc_time || it.total_gc_count.value > ctx.metadata.max_gc_count});"
+    }
+  },
+  "actions": {
+    "log": {
+      "transform": {
+        "script": "names = ctx.payload.hits.hits.collectEntries{[(it._id):it._source.node.name]}; return ctx.payload.aggregations.node_stats.nodes.buckets.collect({ if (it.total_gc_time_spent.value > ctx.metadata.max_gc_time) {names[it.key]+' ('+it.total_gc_time_spent.value+'ms)'} else if (it.total_gc_count.value > ctx.metadata.max_gc_number) {names[it.key]+' ('+it.total_gc_count.value+')'}});"
+      },
+      "logging": {
+        "text": "Old GC thresholds have been exceeeded on the following nodes in the last {{ctx.metadata.window_size}}:\n {{#ctx.payload._value}}{{.}}\n\n{{/ctx.payload._value}}"
+      }
+    }
+  }
+}
